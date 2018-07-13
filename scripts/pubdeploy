@@ -1,0 +1,13 @@
+#!/bin/bash
+
+aws cloudformation deploy --template-file service-stacks/public-subnet-public-loadbalancer.yml \
+--stack-name ecsNodejs \
+--capabilities "CAPABILITY_NAMED_IAM" \
+--parameter-overrides \
+StackName=escNetworking \
+ServiceName=nodejscosmo \
+ImageUrl=505076813643.dkr.ecr.us-east-1.amazonaws.com/vladzj:latest \
+ContainerPort=3000 \
+ContainerCpu=512 \
+ContainerMemory=2048 \
+DesiredCount=3

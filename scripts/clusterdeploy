@@ -1,0 +1,7 @@
+#!/bin/bash
+
+#creates new ECS cluster and LB using existing VPC
+
+aws cloudformation deploy --template-file fargate-networking-stacks/public-vpc.yml \
+--stack-name escNetworking \
+--capabilities "CAPABILITY_NAMED_IAM" \
