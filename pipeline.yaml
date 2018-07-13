@@ -1,0 +1,354 @@
+Parameters:
+
+Resources:
+  ####################################################################################
+  # Start of CI / CD
+  ####################################################################################
+  CodeCommitRepo:
+    Type: AWS::CodeCommit::Repository
+    # Intentional depends on condition to create an artificial delay. Explained in detail above.
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryDescription: Serverless code and the Cloud Formation template to deploy it
+      RepositoryName: !Sub '${AWS::StackName}-Repo'
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-artifacts'
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    DependsOn: ArtifactBucket
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-CodeBuildRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codebuild.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: !Sub '${AWS::StackName}-CodeBuildPolicy'
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketPolicy
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}'
+                  - !Sub 'arn:aws:s3:::${ApplicationBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ApplicationBucket}'
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis'
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                  - cloudfront:ListDistributions
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-CodeBuildLambda:log-stream'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-CodeBuildLambda:log-stream:*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-CodeBuildWebApp:log-stream'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-CodeBuildWebApp:log-stream:*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-products:log-stream'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}-products:log-stream:*'
+  CodeBuildWebAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/codebuild/${AWS::StackName}-CodeBuildWebApp'
+      RetentionInDays: 30
+  CodeBuildWebApp:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeCommitRepo, CodeBuildRole, CodeBuildWebAppLogGroup]
+    Properties:
+      Name: !Sub '${AWS::StackName}-CodeBuildWebApp'
+      Description: !Sub '${AWS::StackName}-CodeBuildWebApp'
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/nodejs:7.0.0
+        EnvironmentVariables:
+          - Name: WEB_BUCKET
+            Value: !Ref ApplicationBucket
+          - Name: Resource_Prefix
+            Value: !Sub '${AWS::StackName}'
+          - Name: REGION
+            Value: !Sub '${AWS::Region}'
+          - Name: WEB_BUCKET_URL
+            Value: !Sub '${ApplicationBucket.DomainName}'
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd portfolio/cloudplatform/serverless/nodejs/app/public/js/services
+            pre_build:
+                commands:
+                - API_ID="$(aws apigateway get-rest-apis --region "${REGION}" --query "items[?name=='"${Resource_Prefix}"-APIGateway'].id" --output text)"
+                - DNS_NAME="https://$API_ID.execute-api.${REGION}.amazonaws.com/v1"
+                - sed -i 's@$APIUrl@'"$DNS_NAME"'@g' todos.js
+            build:
+              commands:
+                - cd ../..
+                - aws s3 cp . s3://${WEB_BUCKET} --recursive
+            post_build:
+              commands:
+                # The AWS CLI tools installed on the code build server are an older version where cloudfront is in preview mode.
+                # Determine the Distribution ID of the cloudfront distribution and create an invalidation to ensure that the cache is invalidated.
+                - aws configure set preview.cloudfront true
+                - DIST_ID="$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?DomainName=='"${WEB_BUCKET_URL}"']].Id" --output text)"
+                - aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+  CodeBuildLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/codebuild/${AWS::StackName}-CodeBuildLambda'
+      RetentionInDays: 30
+  CodeBuildLambda:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeCommitRepo, CodeBuildRole, CodeBuildLambdaLogGroup]
+    Properties:
+      Name: !Sub '${AWS::StackName}-CodeBuildLambda'
+      Description: !Sub '${AWS::StackName}-CodeBuildLambda'
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/nodejs:7.0.0
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref ArtifactBucket
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          # We are forming the ARN since the lambda does not exist at this point.
+          # If the Lambda Name in the Serverless.yaml template is changed, the arn here needs to be changed as well.
+          - Name: GetAPILambda_Arn
+            Value: !Sub 'arn:aws:lambda:${AWS::Region}:109964479621:function:${AWS::StackName}-GETAPILambda'
+          - Name: PostAPILambda_Arn
+            Value: !Sub 'arn:aws:lambda:${AWS::Region}:109964479621:function:${AWS::StackName}-POSTAPILambda'
+          - Name: DeleteAPILambda_Arn
+            Value: !Sub 'arn:aws:lambda:${AWS::Region}:109964479621:function:${AWS::StackName}-DELETEAPILambda'
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - cd portfolio/cloudplatform/serverless/nodejs/app/lambda/
+                - npm install
+            pre_build:
+                commands:
+                - sed -i 's/$AWSRegion/'"${AWS_REGION}"'/g' swagger.yaml
+                - sed -i 's/$GetLambdaArn/'"${GetAPILambda_Arn}"'/g' swagger.yaml
+                - sed -i 's/$PostLambdaArn/'"${PostAPILambda_Arn}"'/g' swagger.yaml
+                - sed -i 's/$DeleteLambdaArn/'"${DeleteAPILambda_Arn}"'/g' swagger.yaml
+            build:
+              commands:
+                - aws cloudformation package --template-file serverless.yaml --output-template-file lambdatemplate.yaml --s3-bucket "${S3_BUCKET}" --s3-prefix serverless-template/codebuild
+          artifacts:
+            files: portfolio/cloudplatform/serverless/nodejs/app/lambda/lambdatemplate.yaml
+            discard-paths: yes
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+  CFDeployerRole:
+    Type: AWS::IAM::Role
+    DependsOn: ArtifactBucket
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-${AWS::Region}-cfdeployer-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [cloudformation.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: !Sub '${AWS::StackName}-${AWS::Region}-cfdeployer-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:AddPermission
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:InvokeFunction
+                  - lambda:RemovePermission
+                  - lambda:UpdateFunctionCode
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunction
+                  - lambda:UpdateFunctionConfiguration
+                  - iam:CreateRole
+                  - iam:CreatePolicy
+                  - iam:GetRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:PassRole
+                  - iam:DeleteRolePolicy
+                  - cloudformation:*
+                  - logs:*
+                  - apigateway:*
+                  - cloudfront:*
+                  - route53:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketPolicy
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}'
+  CodePipeLineRole:
+    Type: AWS::IAM::Role
+    DependsOn: ArtifactBucket
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-${AWS::Region}-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codepipeline.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:*
+                  - iam:ListRoles
+                  - cloudformation:*
+                  - codecommit:List*
+                  - codecommit:Get*
+                  - codecommit:GitPull
+                  - codecommit:UploadArchive
+                  - codecommit:CancelUploadArchive
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - iam:PassRole
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketPolicy
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArtifactBucket}'
+          PolicyName: !Sub '${AWS::StackName}-${AWS::Region}-policy'
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipeLineRole, CodeBuildLambda, CFDeployerRole]
+    Properties:
+      RoleArn: !GetAtt CodePipeLineRole.Arn
+      Name: !Ref AWS::StackName
+      Stages:
+        - Name: source-code-checkout
+          Actions:
+            - Name: App
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                RepositoryName: !GetAtt CodeCommitRepo.Name
+                BranchName: master
+              OutputArtifacts:
+                - Name: SCCheckoutArtifact
+              RunOrder: 1
+        - Name: Build-And-Deploy-API
+          Actions:
+            - Name: build-lambda-function
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildLambda
+              RunOrder: 1
+              InputArtifacts:
+                - Name: SCCheckoutArtifact
+              OutputArtifacts:
+                - Name: BuildLambdaOutput
+            - Name: deploy-lambda-function
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ChangeSetName: Deploy
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub '${AWS::StackName}-serverless-lambda'
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: BuildLambdaOutput::lambdatemplate.yaml
+                RoleArn: !GetAtt CFDeployerRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "ParamsPrefix": "${AWS::StackName}",
+                    "DynamoTableName": "${DBName}",
+                    "CertificateArn": "${CallACMLambda.CertificateArn}",
+                    "OriginBucket": "${ApplicationBucket.DomainName}",
+                    "DomainName": "${DomainName}"
+                  }
+              InputArtifacts:
+                - Name: BuildLambdaOutput
+              RunOrder: 2
+        - Name: Build-And-Deploy-WebApp
+          Actions:
+            - Name: build-web-app
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildWebApp
+              RunOrder: 1
+              InputArtifacts:
+                - Name: SCCheckoutArtifact
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
