@@ -33,15 +33,15 @@
 	<div class="container">
 
 		<div class="jumbotron text-center">
-			<h1>List <span class="label label-info">{{ todos.length }}</span></h1>
+			<h1>List <span class="label label-info">{{ todos.body.length }}</span></h1>
 		</div>
 
 		<div id="todo-list" class="row">
 			<div class="col-sm-4 col-sm-offset-4">
 
-				<div class="checkbox" ng-repeat="todo in todos">
+				<div class="checkbox" ng-repeat="todo in todos.body">
 					<label>
-						<span class="glyphicon glyphicon-check" ng-click="deleteTodo(todo.id)" style="font-size: 16px;"></span> {{ todo.text }}
+						<span class="glyphicon glyphicon-check" ng-click="deleteTodo(todo.id)" style="font-size: 16px;"></span> {{ todos.body.7.text }}
 					</label>
 				</div>
 

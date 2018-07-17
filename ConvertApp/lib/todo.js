@@ -38,6 +38,7 @@ module.exports = function TodoApp() {
             }
             done(err,res);
           });
+
         },
         add: (post, callback) => {
           const done = (err, res) => callback(null, {
@@ -73,8 +74,8 @@ module.exports = function TodoApp() {
           var params = {};
           params.TableName=tableName;
           params.Key={};
-          params.Key.id={S:"9143cbf3-6c31-4a19-99bf-f87d539c9215"};
-          console.log(post._id);
+          params.Key.id={S:post._id};
+          console.log(post);
           dynamo.deleteItem(params, function (err,res) {
             if (err){
               console.log('Error Deleting Item from Database:',JSON.stringify(err));

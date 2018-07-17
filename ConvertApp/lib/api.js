@@ -2,10 +2,10 @@
 
 var express = require('express');
 
-module.exports = (connection) => {
+module.exports = () => {
     var router = express.Router()
 
-    var todo = require('./todo')(connection);
+    var todo = require('./todo')();
 
     function getTodos(res, next) {
         todo.list((error, data) =>{
@@ -13,7 +13,6 @@ module.exports = (connection) => {
                 next(error);
                 return
             }
-
             res.json(data);
         });
     };
