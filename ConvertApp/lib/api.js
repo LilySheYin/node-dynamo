@@ -37,7 +37,7 @@ module.exports = () => {
 
     router.delete('/todos/:todo_id', (req, res, next) => {
         var post  = {
-            _id: parseInt(req.params.todo_id),
+            _id: req.params.todo_id,
         };
         todo.delete(post, (error, data) =>{
             if (error) {

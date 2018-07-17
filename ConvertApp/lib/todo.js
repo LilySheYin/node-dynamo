@@ -1,7 +1,7 @@
 'use strict'
 const AWS = require('aws-sdk');
 const dynamo = new AWS.DynamoDB();
-var uuid = require('uuid');
+const UUID = require('uuid/v1')
 
 var awsregion=process.env.AWS_REGION;
 AWS.config.update({region:awsregion});
@@ -52,7 +52,7 @@ module.exports = function TodoApp() {
           var params = {};
           params.TableName=tableName;
           params.Item={};
-          params.Item.id={S:uuid.v4()};
+          params.Item.id={S:UUID()};
           params.Item.text={S:post.text};
           console.log(JSON.stringify(params));
           dynamo.putItem(params,function (err,res) {
@@ -75,7 +75,7 @@ module.exports = function TodoApp() {
           params.TableName=tableName;
           params.Key={};
           params.Key.id={S:post._id};
-          console.log(post);
+          console.log(post._id);
           dynamo.deleteItem(params, function (err,res) {
             if (err){
               console.log('Error Deleting Item from Database:',JSON.stringify(err));
