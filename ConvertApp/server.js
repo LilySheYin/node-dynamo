@@ -9,10 +9,6 @@ var morgan = require('morgan');
 var bodyParser = require('body-parser');
 var methodOverride = require('method-override');
 
-const AWS = require('aws-sdk');
-const dynamo = new AWS.DynamoDB();
-AWS.config.update({region:'us-east-1'});
-
 const PORT = process.env.PORT || 3000;
 
 var accessLogStream = (process.env.USE_LOG_FILE && process.env.USE_LOG_FILE.toLowerCase() === 'true') ? fs.createWriteStream(path.join('/tmp/', 'server.log'), {flags: 'a'}) : process.stdout;
@@ -43,6 +39,3 @@ app.get('*', (req, res) => {
 
 app.listen(PORT);
 console.log("App listening on port " + PORT);
-
-module.exports = AWS;
-module.exports = dynamo;

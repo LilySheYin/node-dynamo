@@ -75,7 +75,6 @@ module.exports = function TodoApp() {
           params.TableName=tableName;
           params.Key={};
           params.Key.id={S:post._id};
-          console.log(post._id);
           dynamo.deleteItem(params, function (err,res) {
             if (err){
               console.log('Error Deleting Item from Database:',JSON.stringify(err));
