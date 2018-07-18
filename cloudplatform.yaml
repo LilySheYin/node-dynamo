@@ -2504,7 +2504,7 @@ Resources:
     Type: AWS::CodePipeline::Pipeline
     DependsOn:
       - AppTargetGroup
-      # - DBInstance
+      - DBInstance
     Properties:
       Name: !Sub '${ResourcePrefix}-pipeline'
       RoleArn: !GetAtt 'CodePipelineServiceRole.Arn'
